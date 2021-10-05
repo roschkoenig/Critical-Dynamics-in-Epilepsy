@@ -1,7 +1,9 @@
 import matplotlib.pyplot as plt
+import scipy
 import numpy as np
 import copy
 import cde_seeg_functions as cs
+import cde_seeg_importancesampling as cIS
 
 #=======================================================================
 def subject_specify(F):
@@ -248,7 +250,7 @@ def plot_ava(sub):
     plt.tight_layout()
 
 #=======================================================================
-def plot_ccdf(avc, No_bins=50, ax=None, color=1, plottype = 'scatter'):
+def plot_ccdf(avc, No_bins=50, ax=None, color=1, plottype = 'scatter', linewidth = 1, linestyle = '-'):
 #=======================================================================
     import numpy as np
     import matplotlib.pyplot as plt 
@@ -260,27 +262,50 @@ def plot_ccdf(avc, No_bins=50, ax=None, color=1, plottype = 'scatter'):
         cmap       = matplotlib.cm.get_cmap('Set1')
         tc         = cmap(color)
     
+    if not ax: f, ax = plt.subplots()
+        
     # Calcualte logarithmically binned c-cdf 
     #-------------------------------------------------------------------------------
-    bins       = np.linspace(np.log(np.min(avc)),np.log(np.max(avc)), No_bins)
-    avc_binned = np.histogram(avc, bins=np.exp(bins))
-    avc_cdf    = len(avc) - np.cumsum(avc_binned[0])
+    if plottype == 'distribution':
+    # for the distribution plots, we want to track individual fish
+        avc_l = avc
+        max_length = np.max([np.max(a) for a in avc_l])
+        min_length = np.min([np.min(a) for a in avc_l])
+
+        # Convert to matrix of histograms
+
+        bins =  np.linspace(np.log(min_length),np.log(max_length), No_bins)
+        binmat = np.array(0) 
+        
+        for a in avc_l:
+            avc_binned = np.histogram(a, bins = np.exp(bins))
+            avc_cdf    = len(a) - np.cumsum(avc_binned[0])
+            binmat = avc_cdf if np.size(binmat) == 1 else np.vstack((binmat, avc_cdf))
+        
+    else: 
+    # for the other plots we just use one long vector of avalanches 
+        bins       = np.linspace(np.log(np.min(avc)),np.log(np.max(avc)), No_bins)
+        avc_binned = np.histogram(avc, bins=np.exp(bins))
+        avc_cdf    = len(avc) - np.cumsum(avc_binned[0])
     
     # Calcualte logarithmically binned c-cdf 
     #-------------------------------------------------------------------------------
     if plottype == 'scatter':
-        if not ax:
-            plt.scatter(np.log(avc_binned[1][1:]), np.log(avc_cdf), color=tc)
-            ax = plt.gca()
-        else:
-            ax.scatter(np.log(avc_binned[1][1:]), np.log(avc_cdf), color=tc)
+        ax.scatter(np.log(avc_binned[1][1:]), np.log(avc_cdf), color=tc)
     
     if plottype == 'line':
-        if not ax:
-            plt.plot(np.log(avc_binned[1][1:]), np.log(avc_cdf), color=tc)
-            ax = plt.gca()
-        else:
-            ax.plot(np.log(avc_binned[1][1:]), np.log(avc_cdf), color=tc)
+        ax.plot(np.log(avc_binned[1][1:]), np.log(avc_cdf), color=tc)
+    
+    if plottype ==  'loglog':            
+        ax.loglog(avc_binned[1][1:], avc_cdf, color = tc)
+            
+    if plottype == 'distribution':
+        ste = np.std(binmat,0) / len(avc_l)
+        med = np.mean(binmat, 0)
+
+        ax.loglog(avc_binned[1][1:], med, color = tc, linewidth = linewidth, linestyle = linestyle)
+        ax.fill_between(avc_binned[1][1:], med+ste, med-ste, color = tc, alpha = 0.5)
+
 
     ax.set_ylabel('log observed frequency')
     ax.set_xlabel('log avalanche size')
@@ -311,6 +336,25 @@ def plot_sweep(sweep, param = 'alpha', prange = (0,6), doplot=True, cond='bl'):
         extentxy = (sweep['Time windows'][0], sweep['Time windows'][-1], 
                    sweep['Peak thresholds'][0], sweep['Peak thresholds'][-1])
     
+    if param == 'likelihood':
+        bayes_factor = np.ndarray((len(sweep['Peak thresholds']), len(sweep['Time windows'])))
+        for pi in range(len(sweep['Peak thresholds'])):
+            for ti in range(len(sweep['Time windows'])):
+                ci    = 0 if cond == 'bl' else 1 
+                av    = sweep['Avalanches'][pi][ti][ci]
+                if len(av) > 0:
+                    M     = len(av)
+                    a     = min(av)                      # define xmin
+                    b     = max(av)                      # define xmax
+                    npart = 2000                            # number of particles - number of draws from prior distribution
+                    ln    = cIS.IS_LN(npart, av, M, a, b) # call lognormal distribution function
+                    po    = cIS.IS(npart, av, M, a, b)    # call power law function
+                    bayes_factor[pi,ti] = (po[1] - ln[2])
+                else: bayes_factor[pi,ti] = np.nan
+                
+        datamap = bayes_factor
+    
+    
     clear_output()
     
     # Actual plotting routines
@@ -323,3 +367,38 @@ def plot_sweep(sweep, param = 'alpha', prange = (0,6), doplot=True, cond='bl'):
         plt.show
     
     return (datamap)
+
+#=======================================================================
+def plot_groupcompare(data, ax, sumline='median', xspread=0.05, connect=False):
+#=======================================================================
+    oldvec = []
+    oldx   = []
+    oldsum = []
+
+    for a in range(data.shape[1]):
+        vec = data[:,a]
+        xvals = np.random.uniform(-xspread, xspread, vec.shape[0])+a+1
+
+        if (connect) & (len(oldvec) > 0):
+            for xi in range(len(xvals)):
+                if vec[xi] > 1.1 * oldvec[xi]: thiscolor = 'red'
+                if (vec[xi] <= 1.1*oldvec[xi]) & (vec[xi] > 0.9*oldvec[xi]): thiscolor='black'
+                if vec[xi] < 0.9*oldvec[xi]: thiscolor='blue'
+                plt.plot([oldx[xi], xvals[xi]], [oldvec[xi], vec[xi]], color=thiscolor, alpha = 0.1)
+
+
+        if sumline == 'median':
+            sumplot = np.median(vec)
+            plt.plot([a+1-1.5*xspread, a+1+1.5*xspread], [sumplot, sumplot], 
+                     color='black',linewidth=5)
+
+            if (connect) & (len(oldsum) > 0):
+                thiscolor = 'red' if oldsum[0] < sumplot else 'blue' 
+                plt.plot([a, a+1], [oldsum[0], sumplot], '--', color=thiscolor, linewidth=3)
+                if scipy.stats.ranksums(oldvec, vec).pvalue < 0.05:
+                    plt.text(a+0.5, 1.1*np.max([oldvec,vec]), '*', fontsize=24)
+        oldvec = vec
+        oldx   = xvals
+        oldsum = [sumplot]
+
+        plt.scatter(xvals, vec)
