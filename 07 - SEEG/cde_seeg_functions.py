@@ -153,12 +153,14 @@ def avcount(bintrace, AS):
     # Count number of total events within each cascade
     #-------------------------------------------------------------------------------
     avcounts = np.ndarray(0)
+    avtimes  = np.ndarray(0)
     avids    = np.unique(allids)
     avids    = avids[np.where(avids != 0)]
     for a in avids:
         avcounts = np.append(avcounts, np.sum(sums[np.where(allids==a)[0]]))
+        avtimes  = np.append(avtimes, len(np.where(allids == a)[0]))
     
-    return avcounts
+    return avcounts, avtimes 
 
 #=======================================================================
 def avcalc(Subs, Bands, BN, AS, prange, trange):
@@ -199,17 +201,26 @@ def avcalc(Subs, Bands, BN, AS, prange, trange):
 
                     bl = sub['bin_base']
                     sz = sub['bin_seiz']
-                    blcnt = cs.avcount(bl, As)
-                    szcnt = cs.avcount(sz, As)
-                    if ti == 0: ava = [(blcnt,szcnt)]
-                    else:       ava.append((blcnt,szcnt))
-                if pi == 0: Avas = [ava]
-                else:       Avas.append(ava)
+                    blcnt, bltim = cs.avcount(bl, As)
+                    szcnt, sztim = cs.avcount(sz, As)
+                    if ti == 0: 
+                        ava = [(blcnt,szcnt)]
+                        avt = [(bltim,sztim)]
+                    else:       
+                        ava.append((blcnt,szcnt))
+                        avt.append((bltim,sztim))
+                if pi == 0: 
+                    Avas = [ava]
+                    Avts = [avt]
+                else:       
+                    Avas.append(ava)
+                    Avts.append(avt)
 
             sweep = {}
             sweep.update({'Avalanches': Avas,
                           'Peak thresholds': prange,
-                          'Time windows': trange})
+                          'Time windows': trange,
+                          'AvTimes':Avts})
             Subs[s].update({'Sweep':sweep})
             print(' Done')
         print('All done :)')
